@@ -1,0 +1,516 @@
+/*
+  Vegetation Operator for growing vegetation around any arbitrary mesh using Fabric:Splice
+  in most DCC's. Have only tested for Maya 2014, haven't tested for other versions or say
+  SoftImage.
+*/
+
+/// \cond
+require Geometry;
+require Vegetation; // own extension for Bud objects
+/// \endcond
+
+// http://mathworld.wolfram.com/SphericalCoordinates.html
+// simple conversion between spherical coordinates and cartesian taken from WolframAlpha
+// information from Wolfram uses left-handed coordinate system so z and y swap
+/// A conversion function from cartesian to spherical coordinates
+/// \param coords The cartesian coordinates
+inline Vec3 cartesianToSphere(in Vec3 coords) {
+
+  return Vec3(coords.length(), acos(coords.y/coords.length()), atan2(coords.z, coords.x));
+}
+
+/// A conversion function from spherical to cartesian coordinates
+/// \param dist The distance from origin
+/// \param phi The angle in the zx-plane, also known as the azimuthal angle
+/// \param theta The angle from the positive y-axis, also known as the polar angle
+inline Vec3 sphereToCartesian(in Float32 dist,
+                              in Float32 phi,
+                              in Float32 theta) {
+
+  return Vec3(dist*sin(theta)*sin(phi), dist*cos(phi), dist*cos(theta)*sin(phi));
+}
+
+// http://lolengine.net/blog/2013/09/18/beautiful-maths-quaternion-from-vectors
+// an efficient method of finding a rotation quaternion from this blog
+// the input vectors should be of unit length
+/// A function to quickly grab a rotation quat from two vectors
+/// \param a The origin vector
+/// \param b The 'to' vector
+function Quat alignVectors(in Vec3 a,
+                           in Vec3 b) {
+
+  // find the angle between both vectors
+  Float32 real=1.0+a.dot(b);
+  Vec3 axis;
+  // if the both vectors are the parallel, use the x-axis as the turning axis
+  if(real<PRECISION) {
+    axis.set(1.0, 0, 0);
+  }
+  // otherwise, cross both vectors to get the turning axis
+  else {
+    axis=a.cross(b);
+  }
+
+  Quat rotation(axis, real);
+  return rotation.unit(); // normalize quat to have only rotation
+}
+
+/// An operator for evaluating bud sample positions to light effectiveness
+/// \param bud The active bud with sample positions
+/// \param fitness The array of scores for each sample position
+/// \param queryable The shadowing environment given as a spatial queryable object to access the octree
+/// \param maxSceneSize The corner-to-corner distance of the whole scene
+/// \param lightPos The positions of each point light in the scene
+/// \param lightInt The intensities of each point light in the scene
+/// \param sunPos The position of the sun relative to the origin
+/// \param quadratic Whether or not the lights should imitate reality with a quadratic falloff
+operator lightFitness<<<index>>>(in Bud bud,
+                                 io Float32 fitness[],
+                                 in SpatialQueryable queryable,
+                                 in Float32 maxSceneSize,
+                                 in Vec3 lightPos[],
+                                 in Scalar lightInt[],
+                                 in Vec3 sunPos,
+                                 in Boolean quadratic) {
+
+  // initialize a float to accumulate the score
+  Float32 lightScore=0;
+  // only evaluate point lights if there are any
+  if(lightPos.size()>0) {
+    for(UInt32 i=0;i<lightPos.size();++i) {
+      // fire ray from bud position to light direction (i.e. backwards) to see
+      // whether it collides with any of the environment
+      Vec3 direction=lightPos[i]-bud.samplePositions[index];
+      Ray ray(bud.samplePositions[index], direction);
+      GeometryLocation blocked=queryable.raycast(ray, false, 0.0, maxSceneSize);
+
+      // if the ray hasn't been blocked by the environment add to the score
+      if(!blocked.isValid()) {
+        // calculate the quadratic falloff depending on the light intensity
+        if(quadratic) {
+          Float32 strength=lightInt[i]/pow(direction.length(), 2.0);
+          Float32 normalized=strength/maxSceneSize;
+          // arbitrary cutoff for the light to be too dim for plant growth
+          if(normalized>=0.01) {
+            lightScore+=normalized;
+          }
+        }
+        // if there's no falloff, just add a score of 1, it will be averaged later
+        else {
+          lightScore+=1.0;
+        }
+      }
+    }
+    // average the light's score to the number of lights
+    lightScore=lightScore/lightPos.size();
+  }
+
+  // also calculate the sun's contribution if available
+  if(!sunPos.almostEqual(Vec3(0))) {
+    Ray ray(bud.samplePositions[index], sunPos);
+    GeometryLocation blocked=queryable.raycast(ray, false, 0.0, maxSceneSize);
+    if(!blocked.isValid()) {
+      // treat the sun as a full strength light, but still average it
+      Float32 lightsAsFloat=lightPos.size();
+      lightScore+=1.0/(lightsAsFloat+1.0);
+    }
+  }
+
+  // quick test to see if distance had failed, if so, don't add the light score
+  // this ensures the final score is 0 and traumatic reiteration happens
+  if(fitness[index]>0) {
+    fitness[index]+=lightScore*0.5;
+  }
+}
+
+/// An operator for evaluating bud sample positions and environment mesh proximity
+/// \param bud The active bud with sample positions
+/// \param fitness The array of scores for each sample position
+/// \param environment The environment mesh for collision
+/// \param maxSceneSize The corner-to-corner distance of the whole scene
+operator distanceFitness<<<index>>>(io Bud bud,
+                                    io Float32 fitness[],
+                                    in PolygonMesh environment,
+                                    in Float32 maxSceneSize) {
+
+  // initialize a float to accumulate the score
+  Float32 distScore=0;
+  // make it different to the paper, no per-object calculations but instead
+  // take the whole environment as one object, make the program more naive
+  SpatialQueryable queryable=environment;
+  GeometryLocation closest=queryable.getClosest(bud.samplePositions[index], Vec3(1.0), maxSceneSize);
+  // if there is a close polygon
+  if(closest.isValid()) {
+    // grab the normal and position vectors from the polygon and store for later use
+    Vec3 closestNormal=environment.getNormalAtLocation(closest);
+    Vec3 closestPoint=environment.getPositionAtLocation(closest);
+    bud.surfaceNormal=closestNormal;
+    bud.surfacePosition=closestPoint;
+
+    // http://www.miguelcasillas.com/?p=43
+    // check if the point is behind the plane, simple half-space test as there is
+    // a lot of information provided in this situation
+    Vec3 fromPlane=bud.samplePositions[index]-closestPoint;
+    Float32 distanceFromPlane=fromPlane.dot(closestNormal);
+
+    // if the sample is in front of the plane and within the bounds of the scene
+    // add to the score dependant on it's distance relative to the scene's size
+    if(distanceFromPlane>PRECISION && fromPlane.length()<=maxSceneSize) {
+      distScore=1.0-(fromPlane.length()/maxSceneSize);
+    }
+  }
+
+  // blindly add to the fitness as this is the first tropism to be evaluated
+  fitness[index]+=distScore*0.5;
+}
+
+/// An operator for distributing fitness functions for each bud and finding the best sample
+/// \param activeBuds The active bud with sample positions
+/// \param samples The number of random potential positions the bud will grow to next
+/// \param collision The environment mesh for collision
+/// \param shadowing The environment mesh for shadowing
+/// \param vegetation The vegetation mesh itself for self collision
+/// \param branchThick The maximum radius of the vine
+/// \param lightPos The positions of each point light in the scene
+/// \param lightInt The intensities of each point light in the scene
+/// \param sunPos The position of the sun relative to the origin
+/// \param quadratic Whether or not the lights should imitate reality with a quadratic falloff
+operator evaluateSamples<<<index>>>(io Bud activeBuds[],
+                                    in Integer samples,
+                                    in PolygonMesh collision,
+                                    in PolygonMesh shadowing,
+                                    in PolygonMesh vegetation,
+                                    in Scalar branchThick,
+                                    in Vec3 lightPos[],
+                                    in Scalar lightInt[],
+                                    in Vec3 sunPos,
+                                    in Boolean quadratic) {
+
+  // prepare an array to store the scores of each sample position
+  Float32 fitness[];
+  fitness.resize(samples);
+  // evaluate the distance from collision mesh
+  distanceFitness<<<samples>>>(activeBuds[index], fitness, collision, 20.0);
+  // evaluate the amount of light arriving with shadowing mesh and lights
+  lightFitness<<<samples>>>(activeBuds[index], fitness, shadowing, 20.0, lightPos, lightInt, sunPos, quadratic);
+
+  // now find the best sample by comparing for the highest score
+  UInt32 best=0;
+  for(UInt32 n=0;n<samples;++n) {
+    // replace the best index if maxing the two values gives the new value
+    if(Math_max(fitness[best], fitness[n])==fitness[n]) {
+      best=n;
+    }
+  }
+
+  // kill the bud if the best sample is not viable, i.e. prepare it for traumatic reiteration
+  if(fitness[best]==0) {
+    activeBuds[index].active=false;
+  }
+  // otherwise step the position
+  else {
+    // check if the vegetation will collide with itself by raycasting to the vegetation mesh
+    activeBuds[index].stepPosition(best);
+    Vec3 direction=activeBuds[index].getDirection();
+    Ray ray(activeBuds[index].prvPosition, direction);
+    SpatialQueryable queryable=vegetation;
+    GeometryLocation blocked=queryable.raycast(ray, false, 0.0, direction.length());
+    // if so, offset the growth slightly by the thickness of the vine using the surface normal
+    if(blocked.isValid()) {
+      Vec3 offset=activeBuds[index].surfaceNormal*branchThick;
+      activeBuds[index].offsetPosition(offset);
+    }
+  }
+}
+
+/// An operator to generate a number of sample positions for each bud within a conical allowance
+/// \param activeBuds The active bud for storing sample positions
+/// \param samples The number of random potential positions the bud will grow to next
+/// \param distribution The allowed conical angle of positions to deviate from growth direction
+/// \param minStep The minimum distance to grow per step
+/// \param maxStep The maximum distance to grow per step
+/// \param seed A random seed to vary the pseudo-random numbers per step
+operator generateSamples<<<index>>>(io Bud activeBuds[],
+                                    in Integer samples,
+                                    in Float32 distribution,
+                                    in Scalar minStep,
+                                    in Scalar maxStep,
+                                    in UInt32 seed) {
+
+  // get the current growth direction
+  Vec3 direction=activeBuds[index].getDirection();
+
+  // generate sample positions
+  for(UInt32 n=0;n<samples;++n) {
+    // need to generate points in spherical coordinates, which uses 2 angles and dist
+    // first phi, which is in the range 0-pi spherically, but limited by distribution
+    Float32 phi=mathRandomFloat32(seed+1, n+1)*distribution;
+    // then theta, which is in the range 0-2pi spherically
+    Float32 theta=mathRandomFloat32(seed+1823, (n+1)*2)*TWO_PI;
+    // distance will range from tiny scalar PRECISION to the direction length
+    Float32 dist=minStep+mathRandomFloat32(seed+71045, (n+1)*3)*maxStep;
+    // using given spherical values, convert it to cartesian coordinates
+    Vec3 random=sphereToCartesian(dist, phi, theta);
+
+    // need to find the rotation from up vector to direction vector
+    // then rotate random by the rotation to align with direction vector
+    Quat rotation=alignVectors(Vec3(0, 1.0, 0), direction.unit());
+    random=rotation.rotateVector(random);
+    // add the random sample to the list of sample positions
+    activeBuds[index].samplePositions[n]=activeBuds[index].position+random;
+  }
+}
+
+/// A function to quickly create an approximate circle profile for extrusion
+/// \param radius The radius of the circle
+function Vec3[] createProfile(in Float32 radius) {
+  // A slightly smaller radius for some points along the circle
+  Float32 radiusS=radius*0.66;
+  // define a basic circle profile
+  Vec3 profile[];
+  profile.push(Vec3(radius, 0, 0));
+  profile.push(Vec3(radiusS, 0, radiusS));
+  profile.push(Vec3(0, 0, radius));
+  profile.push(Vec3(-radiusS, 0, radiusS));
+  profile.push(Vec3(-radius, 0, 0));
+  profile.push(Vec3(-radiusS, 0, -radiusS));
+  profile.push(Vec3(0, 0, -radius));
+  profile.push(Vec3(radiusS, 0, -radiusS));
+
+  return profile;
+}
+
+/// The main operator to carry out the vegetation growth, more detail is found in the code's comments
+/// \param envCollide The raw input meshes for collision
+/// \param envShadow The raw input meshes for shadowing
+/// \param collideMerged The processed environment mesh for collision
+/// \param shadowMerged The processed environment mesh for shadowing
+/// \param vegeBranches The output vegetation mesh holding only the branches
+/// \param vegeLeaves The output vegetation mesh holding only the leaves
+/// \param seeds The positions of each seed within the scene
+/// \param sunPos The position of the sun relative to the origin
+/// \param lightPos The positions of each point light in the scene
+/// \param lightInt The intensities of each point light in the scene
+/// \param quadratic Whether or not the lights should imitate reality with a quadratic falloff
+/// \param prepareMeshes Whether or not the acceleration structures should be calculated
+/// \param buildGrowth Whether or not the actual plant growth should be carried out
+/// \param steps The number of iterations of the vegetation should accumulate
+/// \param samples The number of random potential positions the bud will grow to next
+/// \param distribution The allowed conical angle of positions to deviate from growth direction
+/// \param minStep The minimum distance to grow per step
+/// \param maxStep The maximum distance to grow per step
+/// \param budChance The chance for a lateral bud to grow on the vine branches
+/// \param branchChance The chance for a lateral bud to activate
+/// \param branchThick The maximum radius of the vine
+/// \param leafSize The size of the leaf planes
+/// \param leafChance The chance on each step for a leaf to grow
+operator vegetationOp(in PolygonMesh envCollide[],
+                      in PolygonMesh envShadow[],
+                      io PolygonMesh collideMerged,
+                      io PolygonMesh shadowMerged,
+                      io PolygonMesh vegeBranches,
+                      io PolygonMesh vegeLeaves,
+                      in Vec3 seeds[],
+                      in Vec3 sunPos,
+                      in Vec3 lightPos[],
+                      in Scalar lightInt[],
+                      in Boolean quadratic,
+                      io Boolean prepareMeshes,
+                      io Boolean buildGrowth,
+                      in Integer steps,
+                      in Integer samples,
+                      in Scalar distribution,
+                      in Scalar minStep,
+                      in Scalar maxStep,
+                      in Scalar budChance,
+                      in Scalar branchChance,
+                      in Scalar branchThick,
+                      in Scalar leafSize,
+                      in Scalar leafChance) {
+
+  // give an approximation of the number of queries an acceleration mesh will receive
+  // this is found from the number of samples each seed might take multiplied by 100
+  // as a buffer for the potential number of active buds at once, per step with a query
+  // per light as well
+  UInt32 approxQueries=samples*seeds.size()*100*steps*lightPos.size();
+
+  // separated a chunk of code out to simply calculate acceleration structures as this takes
+  // quite a large amount of computation depending on the complexity of the scene, e.g. for
+  // speedtree a, it takes at least 9 seconds on 4 cores and takes at least 600mb+ in the maya scene
+  if(prepareMeshes) {
+    // time the accerelation structure creation
+    UInt64 start=getCurrentTicks();
+
+    // clear any previous meshes and clean up the associated acceleration structure
+    collideMerged.removeSpatialQueryAcceleration();
+    collideMerged.clear();
+    shadowMerged.removeSpatialQueryAcceleration();
+    shadowMerged.clear();
+
+    // merge collision and shadowing mesh into one mesh for building acceleration structure
+    Xfo xfo[];
+    xfo.resize(envCollide.size());
+    collideMerged.mergeMeshes(envCollide, xfo, false);
+    xfo.resize(envShadow.size());
+    shadowMerged.mergeMeshes(envShadow, xfo, false);
+
+    // prepare both meshes for spatial partitioning as an octree (default)
+    collideMerged.prepareForSpatialQueries(approxQueries, null);
+    shadowMerged.prepareForSpatialQueries(approxQueries, null);
+
+    // count and calculate the processing time
+    UInt64 end=getCurrentTicks();
+    report("FVegetation: Built acceleration structures in "+getSecondsBetweenTicks(start,end)+"s.");
+
+    // turn itself off so it doesn't re-evaluate every time the splice node is refreshed
+    prepareMeshes=false;
+  }
+
+  // the key chunk for growing the vegetation which can take more or less time than the
+  // acceleration preparations depending on the number of active buds
+  if(buildGrowth) {
+    // time the vegetation growth process
+    UInt64 start=getCurrentTicks();
+
+    // store an array of references to all buds
+    Bud allBuds[];
+    allBuds.resize(seeds.size());
+    // store an array of buds that are active in the current step for quick access
+    Bud activeBuds[];
+    activeBuds.resize(seeds.size());
+    // store an array of buds that have been active at any point in the growth
+    Bud grownBuds[];
+    grownBuds.resize(seeds.size());
+
+     // create root bud to connect all seeds to, see paper, this is a dummy node in the tree
+    allBuds[0]=(Bud(false, Vec3(0)));
+    // place all seeds into all 3 lists
+    for(UInt32 i=0;i<seeds.size();++i) {
+      Bud seed(true, seeds[i], allBuds[0], samples);
+      allBuds[i]=seed;
+      activeBuds[i]=seed;
+      grownBuds[i]=seed;
+      allBuds[0].addChild(seed);
+    }
+
+    // clear previous meshes that have been output-ed and cleanup associated acceleration structure
+    vegeBranches.removeSpatialQueryAcceleration();
+    vegeBranches.clear();
+    vegeLeaves.clear();
+    // precompute unit conversion
+    Float32 distribAsRads=Math_degToRad(distribution);
+
+    // accumulative loop to build vegetation
+    for(UInt32 s=0;s<steps;++s) {
+      // store the size as used a lot
+      UInt32 buds=activeBuds.size();
+      // only do something if there are any active buds
+      if(buds>0) {
+        // create sample positions for each bud
+        generateSamples<<<buds>>>(activeBuds, samples, distribAsRads, minStep, maxStep, s);
+
+        // prepare an octree for the branches for self collision detection
+        vegeBranches.prepareForSpatialQueries(approxQueries, null);
+        // score each sample position according to distance-to-env and light-seeking tropisms
+        evaluateSamples<<<buds>>>(activeBuds, samples, collideMerged, shadowMerged,
+                                  vegeBranches, branchThick,
+                                  lightPos, lightInt, sunPos, quadratic);
+
+        // kale doesn't have any way of removing elements from an array whilst iterating
+        // through it so instead, need to initialize another array to store elements to keep
+        Bud activeBudsNew[];
+        for(UInt32 i=0;i<buds;++i) {
+          // store a reference to the current iteration for easy access
+          Bud current=activeBuds[i];
+
+          // if the sample isn't fit for growth, traumatically reiterate
+          if(!current.active) {
+            // find the next bud down the n-ary tree structure
+            Bud next=current.findNext();
+            if(next!=null) {
+              // make it active and add it into appropriate lists
+              next.active=true;
+              activeBudsNew.push(next);
+              grownBuds.push(next);
+            }
+          }
+          // otherwise, keep the bud growing
+          else {
+            // apply the new, best position
+            activeBudsNew.push(current);
+            // generate an inactive later bud at random intervals
+            if(mathRandomFloat32(s+8741, i+1)<=budChance) {
+              Bud lateral(false, activeBuds[i].position, current, samples);
+              allBuds.push(lateral);
+              current.addChild(lateral);
+              // make the lateral bud active randomly
+              if(mathRandomFloat32(s+94665, (i+1)*2)<=branchChance) {
+                lateral.active=true;
+                activeBudsNew.push(lateral);
+                grownBuds.push(lateral);
+              }
+            }
+
+            // now draw a quick version of the mesh for collision detection
+            Vec3 direction=current.getDirection();
+            Quat rotation=alignVectors(Vec3(0, 1.0, 0), direction.unit());
+            Xfo xfo[];
+            xfo.push(Xfo(current.prvPosition, rotation));
+            xfo.push(Xfo(current.position, rotation));
+            vegeBranches.addExtrusion(xfo, createProfile(0.04));
+
+            // add the base xfo to an array stored on the Bud
+            current.growth.push(Xfo(current.prvPosition, rotation));
+            // gradually reduce the branch thickness as the steps go on
+            Float32 stepAsFloat=s; // cast to Float32
+            Float32 stepsAsFloat=steps; // cast to Float32
+            current.thickness=1.0-(stepAsFloat/stepsAsFloat);
+
+            // generate a leaf at random intervals
+            if(mathRandomFloat32(s+58192, i+1)<=leafChance) {
+              // offset the leaf position with the surface's normal
+              Vec3 shuffle=current.position+(current.surfaceNormal*leafSize*0.25);
+              // randomise the normal slightly to get varying leaf orientations
+              Vec3 random(mathRandomFloat32(s+13, i+2), mathRandomFloat32(s+581, i+3), mathRandomFloat32(s+8912, i+4));
+              Vec3 normal=(current.surfaceNormal+(random/10.0)).unit();
+              // calculate a turning angle to turn the plane to the normal direction
+              Quat latRotation=alignVectors(Vec3(0, 0, 1.0), normal);
+              // calculate a turning angle to spin the leaf down towards the ground
+              Quat downRotation=Quat(Vec3(1.0, 0, 0), HALF_PI).unit();
+              // combine these rotations to get the final rotation
+              Quat leafRotation=latRotation*downRotation;
+              Xfo xfoLeaf(shuffle, leafRotation);
+              // finally draw a plane as a low-poly leaf
+              vegeLeaves.addPlane(xfoLeaf, leafSize, leafSize, 2, 2, true, true);
+            }
+          }
+        }
+
+        // replace the list of active buds with the new and surviving buds
+        activeBuds.resize(0);
+        activeBuds=activeBudsNew;
+      }
+    }
+
+    // clear the proxy geometry and create a clean mesh using accumulated xfo
+    // from any buds that have previously been active
+    vegeBranches.clear();
+    for(UInt32 i=0;i<grownBuds.size();++i) {
+      // clamp the lowest thickness to 30% original
+      Float32 thickness=Math_max(grownBuds[i].thickness, 0.3);
+      vegeBranches.addExtrusion(grownBuds[i].growth, createProfile(branchThick*thickness));
+    }
+
+    // generate appropriate normals for both meshes
+    vegeBranches.recomputePointNormals();
+    vegeLeaves.recomputePointNormals();
+
+    // count and calculate the processing time
+    UInt64 end=getCurrentTicks();
+    report("Vegetation growth took "+getSecondsBetweenTicks(start,end)+"s.");
+    report("Current active buds - "+activeBuds.size()+", total buds - "+allBuds.size()+".");
+
+    // turn itself off so it doesn't re-grow every time the splice node is refreshed
+    buildGrowth=false;
+  }
+}

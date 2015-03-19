@@ -1,0 +1,142 @@
+{
+  "version" : "1015000",
+  "info" : {
+    "hostAppName" : "Maya",
+    "hostAppVersion" : "2014"
+    },
+  "nodes" : [
+    {
+      "bindings" : [
+        {
+          "operator" : {
+            "name" : "vegetationOp",
+            "filename" : "vegetationOp.kl"
+            }
+          }
+        ]
+      }
+    ],
+  "extensions" : [
+    "Vegetation"
+    ],
+  "ports" : [
+    {
+      "name" : "branchChance",
+      "type" : "Scalar",
+      "default" : "0.1000000014901161"
+      },
+    {
+      "name" : "branchThick",
+      "type" : "Scalar",
+      "default" : "0.05999999865889549"
+      },
+    {
+      "name" : "budChance",
+      "type" : "Scalar",
+      "default" : "0.05000000074505806"
+      },
+    {
+      "name" : "buildGrowth",
+      "type" : "Boolean",
+      "mode" : "io",
+      "default" : "false"
+      },
+    {
+      "name" : "collideMerged",
+      "type" : "PolygonMesh",
+      "mode" : "io"
+      },
+    {
+      "name" : "distribution",
+      "type" : "Scalar",
+      "default" : "30"
+      },
+    {
+      "name" : "envCollide",
+      "type" : "PolygonMesh[]"
+      },
+    {
+      "name" : "envShadow",
+      "type" : "PolygonMesh[]"
+      },
+    {
+      "name" : "leafChance",
+      "type" : "Scalar",
+      "default" : "0.2000000029802322"
+      },
+    {
+      "name" : "leafSize",
+      "type" : "Scalar",
+      "default" : "0.6000000238418579"
+      },
+    {
+      "name" : "lightInt",
+      "type" : "Scalar[]",
+      "persistence" : true,
+      "default" : "[]"
+      },
+    {
+      "name" : "lightPos",
+      "type" : "Vec3[]",
+      "persistence" : true,
+      "default" : "[]"
+      },
+    {
+      "name" : "maxStep",
+      "type" : "Scalar",
+      "default" : "0.5"
+      },
+    {
+      "name" : "minStep",
+      "type" : "Scalar",
+      "default" : "0.004999999888241291"
+      },
+    {
+      "name" : "prepareMeshes",
+      "type" : "Boolean",
+      "mode" : "io",
+      "default" : "false"
+      },
+    {
+      "name" : "quadratic",
+      "type" : "Boolean",
+      "default" : "false"
+      },
+    {
+      "name" : "samples",
+      "type" : "Integer",
+      "default" : "32"
+      },
+    {
+      "name" : "seeds",
+      "type" : "Vec3[]",
+      "persistence" : true,
+      "default" : "[]"
+      },
+    {
+      "name" : "shadowMerged",
+      "type" : "PolygonMesh",
+      "mode" : "io"
+      },
+    {
+      "name" : "steps",
+      "type" : "Integer",
+      "default" : "600"
+      },
+    {
+      "name" : "sunPos",
+      "type" : "Vec3",
+      "default" : "{\n  \"x\" : 0,\n  \"y\" : 0,\n  \"z\" : 0\n  }"
+      },
+    {
+      "name" : "vegeBranches",
+      "type" : "PolygonMesh",
+      "mode" : "out"
+      },
+    {
+      "name" : "vegeLeaves",
+      "type" : "PolygonMesh",
+      "mode" : "out"
+      }
+    ]
+  }

@@ -1,0 +1,109 @@
+/*
+  Bud class for structuring the n-ary tree and storing various bud-related attributes
+  such as it's sample positions but more importantly it's current and previous positions.
+*/
+
+/// \cond
+require Math;
+/// \endcond
+
+/**
+  A data structure to be used to store the buds, or essentially nodes for the vegetation
+  growth as a n-ary tree. Makes handling each bud's individual positions easier as there
+  are various attributes that are useful for each instance to store for use.
+  \brief A bud in the vegetation
+*/
+object Bud {
+  /// Whether the bud is alive or not
+  Boolean active;
+  /// The current position of the bud
+  Vec3 position;
+  /// The previous position of the bud
+  Vec3 prvPosition;
+  /// The array of random potential positions the bud could grow to
+  Vec3 samplePositions[];
+  /// The point of the polygon on which the bud is closest to
+  Vec3 surfacePosition;
+  /// The normal of the polygon on which the bud is closest to
+  Vec3 surfaceNormal;
+  /// The accumulated transformations of growth the vegetation goes through
+  Xfo growth[];
+  /// The radius of the branch
+  Float32 thickness;
+  /// The reference to the parent node in the tree
+  Bud parentBud;
+  /// The references to the the child nodes in the tree
+  Bud children[];
+};
+
+/// Simple constructor for the root of the tree as it doesn't have a parent
+/// \param active Whether the bud is alive or not
+/// \param position The current position of the bud
+function Bud(Boolean active, Vec3 position) {
+  this.active=active;
+  this.position=position;
+  // offset the starting previous position to be just under the previous point
+  this.prvPosition=Vec3(position.x, position.y-0.1, position.z);
+  this.samplePositions.resize(0);
+  this.surfacePosition=Vec3(0);
+  this.surfaceNormal=Vec3(0);
+  this.growth.resize(0);
+  this.thickness=0.07;
+  this.parentBud=null;
+  this.children.resize(0);
+}
+
+/// Standard constructor for other nodes in the tree where buds may be initialized anywhere
+/// \param active Whether the bud is alive or not
+/// \param position The current position of the bud
+/// \param parent The reference to the parent node in the tree
+/// \param samples The number of random positions to generate per bud, per step
+function Bud(Boolean active, Vec3 position, Bud parent, UInt32 samples) {
+  this.active=active;
+  this.position=position;
+  // offset the starting previous position to be just under the previous point
+  this.prvPosition=Vec3(position.x, position.y-0.1, position.z);
+  this.samplePositions.resize(samples);
+  this.surfacePosition=Vec3(0);
+  this.surfaceNormal=Vec3(0);
+  this.growth.resize(0);
+  this.thickness=0.07;
+  this.parentBud=parent;
+  this.children.resize(0);
+}
+
+/// A function for getting the growth direction
+inline Vec3 Bud.getDirection() {
+  return this.position-this.prvPosition;
+}
+
+/// A function for advancing the position of the bud
+/// \param best The index of the best sample position the bud may grow to
+inline Bud.stepPosition!(UInt32 best) {
+  this.prvPosition=this.position;
+  this.position=this.samplePositions[best];
+}
+
+/// A function for shifting the bud
+/// \param offset The vector to offset the current position by
+inline Bud.offsetPosition!(Vec3 offset) {
+  this.position+=offset;
+}
+
+/// A function for adding a child node to the array of references
+/// \param child The reference to the child node
+inline Bud.addChild!(Bud child) {
+  this.children.push(child);
+}
+
+/// A function for finding the closest inactive bud on the same branch
+function Bud Bud.findNext() {
+  UInt32 size=this.children.size();
+  for(UInt32 i=0;i<size;++i) {
+    if(!this.children[size-i-1].active && this.children[size-i-1]!=null) {
+      return this.children[size-i-1];
+    }
+  }
+
+  return null;
+}

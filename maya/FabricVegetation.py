@@ -63,7 +63,7 @@ def importSplice(*args) :
   # create the node and load in the splice file
   node=cmds.createNode('spliceMayaNode')
   cmds.rename(node, 'fabricVegetation')
-  path=cmds.internalVar(userScriptDir=True)+'FabricVegetation/FabricVegetation.splice'
+  path=cmds.internalVar(userScriptDir=True)+'FabricVegetation.splice'
   cmds.fabricSplice('loadSplice', 'fabricVegetation', '{"fileName" : "'+path+'"}')
 
 ## Select the FVegetation splice node
@@ -274,7 +274,7 @@ def FVegetationUI() :
 
   cmds.separator(style='none', height=20, parent=mainLayout)
 
-  path=cmds.internalVar(userScriptDir=True)+'FabricVegetation/images/FabricVegetationBanner.png'
+  path=cmds.internalVar(userScriptDir=True)+'images/FabricVegetationBanner.png'
   cmds.image(parent=mainLayout, image=path)
 
   cmds.separator(style='none', height=7, parent=mainLayout)

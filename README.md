@@ -2,8 +2,8 @@
 
 Tool for generating ivy around a given piece of geometry. The implementation is based-off
 **Virtual climbing plants competing for space** by Bedřich Beneš (2002). Written for an industry
-masterclass using [Fabric Engine](http://fabricengine.com/) 1.13.0. This should grant us
-DCC-agnosticism out-of-the-box, but the GUI is only compatible with Maya.
+masterclass using [Fabric Engine](http://fabricengine.com/). This should grant us DCC-agnosticism
+out-of-the-box, but the GUI is only compatible with Maya.
 
 ## Requirements
 
@@ -12,11 +12,11 @@ DCC-agnosticism out-of-the-box, but the GUI is only compatible with Maya.
 
 ## Installation
 
-### For the splice tool
+### Splice tool
 
 Simply clone the repo and add the `ext` directory to the `FABRIC_EXTS_PATH` environment variable.
 
-### For the GUI
+### User interface
 
 Copy the files from inside the `maya` directory to your `maya/<VERSION>-x64/scripts` folder and
 set up a shelf button to open the GUI to the Fabric Splice node (an icon is provided in the

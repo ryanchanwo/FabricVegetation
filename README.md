@@ -7,8 +7,8 @@ out-of-the-box, but the GUI is only compatible with Maya.
 
 ## Requirements
 
-- Fabric Engine: 1.13.0.
-- Maya: 2014.
+- **Fabric Engine**: 1.13.0
+- **Maya**: 2014
 
 ## Installation
 

@@ -52,8 +52,8 @@ branching.
 
 - The GUI is quite rudimentary, it was done *quickly and dirtily* with Maya GUI commands.
 - Sunlight does not work entirely as expected.
-- The clear seeds and clear lights buttons disconnect all seeds and lights, but do not clean the
-fabricVegetation node's multi-array indices. This causes any new seeds/lights to have a bad
+- The "clear seeds" and "clear lights" buttons disconnect all seeds and lights, but do not clean
+the `fabricVegetation` node's multi-array indices. This causes any new seeds/lights to have a bad
 naming convention and incorrect connections.
 - The leaves are generally in the correct direction, but there are cases where they may seem to
 be less random than desired, i.e. on a large flat surface, the sizes also need to be randomized.

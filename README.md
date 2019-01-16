@@ -66,3 +66,7 @@ nearly disregarding the environment geometry.
 
 Benes, B. and Millan, E. (2002). Virtual climbing plants competing for space. Proceedings of
 Computer Animation 2002 (CA 2002).
+
+## License
+
+This project is licensed under the [MIT license](LICENSE) (https://mit-license.org/).
